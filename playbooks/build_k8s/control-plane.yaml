@@ -1,0 +1,309 @@
+---
+- name: Build Kubernetes Cluster Base
+  hosts: all # Make sure this host group is defined in your inventory
+  become: yes
+  vars_files:
+    - ./vars/control-plane-vars.yaml
+  tasks:
+    - name: Add SSH public key to remote host
+      ansible.posix.authorized_key:
+        user: "{{ ansible_user }}"
+        state: present
+        key: "{{ lookup('file', '~/.ssh/id_ed25519.pub') }}"
+        
+    - name: Disable SWAP
+      ansible.builtin.command: swapoff -a
+      register: swapoff_result
+      failed_when: swapoff_result.rc != 0
+      changed_when: swapoff_result.rc == 0
+
+    - name: Comment out swap entries in /etc/fstab
+      ansible.builtin.replace:
+        path: /etc/fstab
+        regexp: '^([^#].*?\sswap\s.*)$'
+        replace: '#\1'
+        backup: yes
+      register: fstab_result
+      failed_when: fstab_result.failed
+
+    - name: Load IPVS & K8S modules
+      ansible.builtin.command: modprobe {{ item }}
+      loop:
+        - ip_vs
+        - ip_vs_rr
+        - ip_vs_wrr
+        - ip_vs_sh
+        - nf_conntrack
+        - overlay
+        - br_netfilter
+        - vhost_vsock
+
+    - name: modprobe file
+      ansible.builtin.copy:
+        content: |
+          ip_vs
+          ip_vs_rr
+          ip_vs_wrr
+          ip_vs_sh
+          nf_conntrack
+          overlay
+          br_netfilter
+          vhost_vsock
+        dest: /etc/modules-load.d/ipvs.conf
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: configure sysctl for k8s
+      ansible.builtin.copy:
+        content: |
+          net.bridge.bridge-nf-call-ip6tables = 1
+          net.bridge.bridge-nf-call-iptables = 1
+          net.ipv4.ip_forward = 1
+          vm.swappiness=0
+        dest: /etc/sysctl.d/k8s.conf
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Apply systcl setting
+      ansible.builtin.command: sysctl --system
+
+    - name: Create WORKDIR
+      ansible.builtin.file:
+        path: "{{ WORKDIR }}"
+        state: directory
+        mode: "0744"
+
+    - name: Create Directories
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: directory
+        mode: "{{ item.mode }}"
+      loop:
+        - { path: "{{ WORKDIR }}", mode: "0744" }
+        - { path: "/opt/cni/bin", mode: "0755" }
+        - { path: "/usr/local/lib/systemd/system", mode: "0755" }
+        - { path: "/etc/containerd", mode: "0755" }
+
+    - name: Download containerd files
+      ansible.builtin.get_url:
+        url: "{{ item.url }}"
+        dest: "{{ item.dest }}"
+        mode: "{{ item.mode }}"
+        force: yes
+      loop: 
+        # containerd
+        - { url: "https://github.com/containerd/containerd/releases/download/v{{ CONTAINERD_VERSION }}/containerd-static-{{ CONTAINERD_VERSION }}-linux-{{ ARCH }}.tar.gz", dest: "{{ WORKDIR }}/containerd-static-{{ CONTAINERD_VERSION }}.tar.gz", mode: "0644"}
+        # runc
+        - { url: "https://github.com/opencontainers/runc/releases/download/v{{ RUNC_VERSION }}/runc.{{ ARCH }}", dest: "/usr/local/sbin/runc", mode: "0755"}
+        # cni
+        - { url: "https://github.com/containernetworking/plugins/releases/download/v{{ CNI_VERSION }}/cni-plugins-linux-{{ ARCH }}-v{{ CNI_VERSION }}.tgz", dest: "{{ WORKDIR }}/cni-plugin-v{{ CNI_VERSION }}.tgz", mode: "0644"}
+        # containerd service
+        - { url: "https://raw.githubusercontent.com/containerd/containerd/main/containerd.service", dest: "/usr/local/lib/systemd/system/containerd.service", mode: "0644"}
+        # ctr config  
+        - { url: "{{ ctr_config_url }}", dest: "/etc/containerd/config.toml", mode: "0644"}
+
+    - name: Install containerd & cni
+      ansible.builtin.unarchive:
+        src: "{{ item.src }}"
+        dest: "{{ item.dest }}"
+        remote_src: yes
+        mode: "{{ item.mode }}"
+      loop:
+        - { src: "{{ WORKDIR }}/containerd-static-{{ CONTAINERD_VERSION }}.tar.gz", dest: "/usr/local", mode: "0755" }
+        - { src: "{{ WORKDIR }}/cni-plugin-v{{ CNI_VERSION }}.tgz", dest: "/opt/cni/bin", mode: "0755" }
+
+
+    - name: systemd to reread configs
+      ansible.builtin.systemd_service:
+        daemon_reload: true
+
+    - name: Restart containerd service
+      ansible.builtin.systemd_service:
+        name: containerd.service
+        state: restarted
+        
+    - name: Remove useless packages from the cache
+      ansible.builtin.apt:
+        autoclean: yes
+
+    - name: Remove dependencies that are no longer required
+      ansible.builtin.apt:
+        autoremove: yes
+
+    - name: Add ansible hosts to /etc/hosts
+      ansible.builtin.lineinfile:
+        path: /etc/hosts
+        line: "{{ hostvars[item].ansible_host }} {{ item }}"
+        state: present
+      loop: "{{ ansible_play_hosts }}"
+      when: hostvars[item].ansible_host is defined
+
+    - name: Install K8S Depond Packages
+      ansible.builtin.apt:
+        name:
+          - apt-transport-https
+          - jq
+          - curl
+          - ca-certificates
+          - gpg
+          - gnupg
+        state: present
+        update_cache: yes
+
+    - name: Install K8S gpgkey
+      ansible.builtin.apt_key:
+        url: "https://pkgs.k8s.io/core:/stable:/v{{ K8S_VERSION }}/deb/Release.key"
+        keyring: /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+        state: present
+      register: add_key
+      failed_when: add_key.failed
+
+    - name: Add Kubernetes APT source
+      ansible.builtin.lineinfile:
+        path: /etc/apt/sources.list.d/kubernetes.list
+        line: "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v{{ K8S_VERSION }}/deb/ /"
+        create: yes
+        state: present
+        mode: "0644"
+
+    - name: Install kubelet、kubeadm、kubectl
+      ansible.builtin.apt:
+        name:
+          - kubelet
+          - kubeadm
+          - kubectl
+        state: present
+        update_cache: yes
+    
+    - name: Hold Kubernetes packages
+      ansible.builtin.dpkg_selections:
+        name: "{{ item }}"
+        selection: hold
+      loop:
+        - kubectl
+        - kubelet
+        - kubeadm
+
+    - name: Config kubelet
+      ansible.builtin.copy:
+        content: |
+          KUBELET_EXTRA_ARGS="--cgroup-driver=systemd"
+        dest: /etc/default/kubelet
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Config crictl
+      ansible.builtin.copy:
+        content: |
+          runtime-endpoint: unix:///run/containerd/containerd.sock
+          image-endpoint: unix:///run/containerd/containerd.sock
+          timeout: 10
+          debug: false
+        dest: /etc/crictl.yaml
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Enable & Restart Kubelet Service
+      ansible.builtin.systemd_service:
+        name: kubelet
+        enabled: true
+        state: restarted
+
+    - name: Pull K8S Image
+      ansible.builtin.command: kubeadm config images pull
+
+    - name: Recursively WORKDIR directory
+      ansible.builtin.file:
+        path: "{{ WORKDIR }}"
+        state: absent
+    
+    - name: apt update&upgrade
+      ansible.builtin.apt:
+        update_cache: yes
+        upgrade: dist
+
+- name: Init K8S Cluster
+  hosts: k8s_control_plane_init
+  become: true
+  vars_files:
+    - ./vars/control-plane-vars.yaml
+  tasks:
+    - name: Kubeadm init
+      ansible.builtin.command:
+        argv:
+          - kubeadm
+          - init
+          - --upload-certs
+          - --control-plane-endpoint={{ K8S_FQDN }}
+          - --cri-socket=unix:///run/containerd/containerd.sock
+          - --pod-network-cidr={{ K8S_POD_NETWORK_CIDR }}
+          - --service-cidr={{ K8S_SERVICE_CIDR }}
+      register: kubeadm_output
+
+    - name: Save all join command to file
+      ansible.builtin.copy:
+        content: "{{ kubeadm_output.stdout }}"
+        dest: "/etc/kubernetes/all_join.txt"
+        mode: '0644'
+
+    - name: Debug full kubeadm init output
+      ansible.builtin.debug:
+        msg: "{{ kubeadm_output.stdout_lines }}"
+      when: kubeadm_output.stdout is defined
+
+    - name: Extract join commands from kubeadm init output
+      ansible.builtin.set_fact:
+        join_control_plane_command: "{{ kubeadm_output.stdout | regex_search('kubeadm\\s+join\\s+[^\\n]*(?:\\n\\s+--[^\\n]*)*?\\s+--control-plane[^\\n]*(?:\\n\\s+--[^\\n]*)*', multiline=True) | regex_replace('\\s*\\\\\\n\\s*', ' ') | trim | default('Not found') }}"
+        join_worker_command: "{{ kubeadm_output.stdout | regex_search('kubeadm\\s+join\\s+[^\\n]*(?:\\n\\s+--[^\\n]*)*', multiline=True) | regex_replace('\\s+--control-plane[^\\n]*(?:\\n\\s+--[^\\n]*)*', '') | regex_replace('\\s*\\\\\\s*\\n\\s*', ' ') | regex_replace('\\s*\\\\\\s*$', '') | trim | default('Not found') }}"
+      when: kubeadm_output.stdout is defined
+
+    - name: Debug extracted join commands
+      ansible.builtin.debug:
+        msg:
+          - "Control Plane Join Command: {{ join_control_plane_command }}"
+          - "Worker Join Command: {{ join_worker_command }}"
+
+    - name: Save join commands to file
+      ansible.builtin.copy:
+        content: |
+          Control Plane Join Command:
+          {{ join_control_plane_command }}
+
+          Worker Join Command:
+          {{ join_worker_command }}
+        dest: /etc/kubernetes/join_commands.txt
+      when: join_control_plane_command != 'Not found' or join_worker_command != 'Not found'
+
+    - name: Save join commands to a file
+      ansible.builtin.copy:
+        content: |
+          ---
+          join_control_plane_command: "{{ join_control_plane_command }}"
+          join_worker_command: "{{ join_worker_command }}"
+        dest: ./vars/k8s-join-vars.yaml
+      delegate_to: localhost
+      become: false
+
+- name: Join K8S Cluster Control Plane
+  hosts: k8s_control_plane
+  become: true
+  vars_files:
+    - ./vars/k8s-join-vars.yaml
+  tasks:
+    - name: Join K8S Cluster Control Plane
+      ansible.builtin.command:
+        argv: "{{ join_control_plane_command.split() }}"
+
+- name: Join K8S Cluster Worker
+  hosts: k8s_workerloads
+  become: true
+  vars_files:
+    - ./vars/k8s-join-vars.yaml
+  tasks:
+    - name: Join K8S Cluster Worker
+      ansible.builtin.command:
+        argv: "{{ join_worker_command.split() }}"
