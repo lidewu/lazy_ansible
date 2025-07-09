@@ -216,10 +216,6 @@
     - name: Pull K8S Image
       ansible.builtin.command: kubeadm config images pull
 
-    - name: Recursively WORKDIR directory
-      ansible.builtin.file:
-        path: "{{ WORKDIR }}"
-        state: absent
     
     - name: apt update&upgrade
       ansible.builtin.apt:
@@ -244,39 +240,32 @@
           - --service-cidr={{ K8S_SERVICE_CIDR }}
       register: kubeadm_output
 
+    - name: Ensure kube directory exists
+      ansible.builtin.file:
+        path: "{{ ansible_env.HOME }}/.kube"
+        state: directory
+        mode: '0700'
+
+    - name: Copy Kubernetes admin.conf to user's kube config
+      ansible.builtin.copy:
+        src: /etc/kubernetes/admin.conf
+        dest: "{{ ansible_env.HOME }}/.kube/config"
+        mode: '0600'
+        backup: yes
+        remote_src: yes
+
     - name: Save all join command to file
       ansible.builtin.copy:
         content: "{{ kubeadm_output.stdout }}"
         dest: "/etc/kubernetes/all_join.txt"
         mode: '0644'
 
-    - name: Debug full kubeadm init output
-      ansible.builtin.debug:
-        msg: "{{ kubeadm_output.stdout_lines }}"
-      when: kubeadm_output.stdout is defined
 
     - name: Extract join commands from kubeadm init output
       ansible.builtin.set_fact:
         join_control_plane_command: "{{ kubeadm_output.stdout | regex_search('kubeadm\\s+join\\s+[^\\n]*(?:\\n\\s+--[^\\n]*)*?\\s+--control-plane[^\\n]*(?:\\n\\s+--[^\\n]*)*', multiline=True) | regex_replace('\\s*\\\\\\n\\s*', ' ') | trim | default('Not found') }}"
         join_worker_command: "{{ kubeadm_output.stdout | regex_search('kubeadm\\s+join\\s+[^\\n]*(?:\\n\\s+--[^\\n]*)*', multiline=True) | regex_replace('\\s+--control-plane[^\\n]*(?:\\n\\s+--[^\\n]*)*', '') | regex_replace('\\s*\\\\\\s*\\n\\s*', ' ') | regex_replace('\\s*\\\\\\s*$', '') | trim | default('Not found') }}"
       when: kubeadm_output.stdout is defined
-
-    - name: Debug extracted join commands
-      ansible.builtin.debug:
-        msg:
-          - "Control Plane Join Command: {{ join_control_plane_command }}"
-          - "Worker Join Command: {{ join_worker_command }}"
-
-    - name: Save join commands to file
-      ansible.builtin.copy:
-        content: |
-          Control Plane Join Command:
-          {{ join_control_plane_command }}
-
-          Worker Join Command:
-          {{ join_worker_command }}
-        dest: /etc/kubernetes/join_commands.txt
-      when: join_control_plane_command != 'Not found' or join_worker_command != 'Not found'
 
     - name: Save join commands to a file
       ansible.builtin.copy:
@@ -298,6 +287,20 @@
       ansible.builtin.command:
         argv: "{{ join_control_plane_command.split() }}"
 
+    - name: Ensure .kube directory exists
+      ansible.builtin.file:
+        path: "{{ ansible_env.HOME }}/.kube"
+        state: directory
+        mode: '0700'
+
+    - name: Copy Kubernetes admin.conf to user's kube config
+      ansible.builtin.copy:
+        src: /etc/kubernetes/admin.conf
+        dest: "{{ ansible_env.HOME }}/.kube/config"
+        mode: '0600'
+        backup: yes
+        remote_src: yes
+
 - name: Join K8S Cluster Worker
   hosts: k8s_workerloads
   become: true
@@ -307,3 +310,60 @@
     - name: Join K8S Cluster Worker
       ansible.builtin.command:
         argv: "{{ join_worker_command.split() }}"
+
+- name: Install K8S CNI Plugin-cilium
+  hosts: k8s_cni_cilium
+  become: true
+  vars_files:
+    - ./vars/control-plane-vars.yaml
+  tasks:
+    - name: Check if cilium-cli is installed
+      ansible.builtin.command: cilium version
+      register: cilium_version
+      ignore_errors: true
+
+    - name: Check cilium-cli stable version
+      ansible.builtin.command: curl -s https://raw.githubusercontent.com/cilium/cilium-cli/main/stable.txt
+      register: cilium_cli_stable_version
+      changed_when: false
+      failed_when: cilium_cli_stable_version.stdout == ""
+
+    - name: Check cilium stable version
+      ansible.builtin.command: curl -s https://raw.githubusercontent.com/cilium/cilium/refs/heads/main/stable.txt | sed 's/^v//'
+      register: cilium_stable_version
+      changed_when: false
+      failed_when: cilium_stable_version.stdout == ""
+
+    - name: Download cilium-cli
+      ansible.builtin.get_url:
+        url: "https://github.com/cilium/cilium-cli/releases/download/{{ cilium_cli_stable_version.stdout }}/cilium-linux-{{ ARCH }}.tar.gz"
+        dest: "{{ WORKDIR }}/cilium-linux-{{ ARCH }}.tar.gz"
+        mode: "0644"
+        force: yes
+      when: cilium_version.rc != 0
+
+    - name: Install cilium-cli
+      ansible.builtin.unarchive:
+        src: "{{ WORKDIR }}/cilium-linux-{{ ARCH }}.tar.gz"
+        dest: /usr/local/bin
+        mode: "0755"
+        remote_src: yes
+      when: cilium_version.rc != 0
+
+    - name: Install Cilium version 1.17.5
+      ansible.builtin.command: 
+        argv:
+          - cilium 
+          - install
+          - --version={{ cilium_stable_version.stdout }}
+      register: cilium_install_output
+      when: cilium_version.rc != 0
+
+    - name: Debug Cilium install output
+      ansible.builtin.debug:
+        var: cilium_install_output
+
+    - name: Recursively WORKDIR directory
+      ansible.builtin.file:
+        path: "{{ WORKDIR }}"
+        state: absent
