@@ -5,6 +5,17 @@
   vars_files:
     - ./vars/control-plane-vars.yaml
   tasks:
+    - name: Disable unattended-upgrades
+      ansible.builtin.copy:
+        content: |
+          APT::Periodic::Update-Package-Lists "0";
+          APT::Periodic::Unattended-Upgrade "0";
+        dest: /etc/apt/apt.conf.d/20auto-upgrades
+        owner: root
+        group: root
+        mode: "0644"
+      register: disable_unattended_upgrades
+
     - name: Add SSH public key to remote host
       ansible.posix.authorized_key:
         user: "{{ ansible_user }}"
@@ -127,10 +138,12 @@
     - name: Remove useless packages from the cache
       ansible.builtin.apt:
         autoclean: yes
+        lock_timeout: 30
 
     - name: Remove dependencies that are no longer required
       ansible.builtin.apt:
         autoremove: yes
+        lock_timeout: 30
 
     - name: Add ansible hosts to /etc/hosts
       ansible.builtin.lineinfile:
@@ -149,8 +162,10 @@
           - ca-certificates
           - gpg
           - gnupg
+          - bash-completion 
         state: present
         update_cache: yes
+        lock_timeout: 30
 
     - name: Install K8S gpgkey
       ansible.builtin.apt_key:
@@ -176,6 +191,7 @@
           - kubectl
         state: present
         update_cache: yes
+        lock_timeout: 30
     
     - name: Hold Kubernetes packages
       ansible.builtin.dpkg_selections:
@@ -277,6 +293,14 @@
       delegate_to: localhost
       become: false
 
+    - name: Set up kubectl bash completion
+      ansible.builtin.shell: kubectl completion bash | tee /etc/bash_completion.d/kubectl > /dev/null
+
+    - name: Set permissions for kubectl completion file
+      ansible.builtin.file:
+        path: /etc/bash_completion.d/kubectl
+        mode: '0644'
+
 - name: Join K8S Cluster Control Plane
   hosts: k8s_control_plane
   become: true
@@ -300,6 +324,14 @@
         mode: '0600'
         backup: yes
         remote_src: yes
+
+    - name: Set up kubectl bash completion
+      ansible.builtin.shell: kubectl completion bash | tee /etc/bash_completion.d/kubectl > /dev/null
+
+    - name: Set permissions for kubectl completion file
+      ansible.builtin.file:
+        path: /etc/bash_completion.d/kubectl
+        mode: '0644'
 
 - name: Join K8S Cluster Worker
   hosts: k8s_workerloads
@@ -367,3 +399,20 @@
       ansible.builtin.file:
         path: "{{ WORKDIR }}"
         state: absent
+
+- name: Restore
+  hosts: all
+  become: true
+  vars_files:
+    - ./vars/control-plane-vars.yaml
+  tasks:
+    - name: Restore unattended-upgrades
+      ansible.builtin.copy:
+        content: |
+          APT::Periodic::Update-Package-Lists "1";
+          APT::Periodic::Unattended-Upgrade "1";
+        dest: /etc/apt/apt.conf.d/20auto-upgrades
+        owner: root
+        group: root
+        mode: "0644"
+      register: disable_unattended_upgrades
