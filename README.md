@@ -1,16 +1,22 @@
 # lazy_ansible
+---
 
-## How to use
+## **How_to_ use**
 
- ```bash
-   # exec ./install_uv,sh
+
+### System Requirements
+  - Run ./install_uv.sh 
+  ```bash
    sh ./install_uv.sh
+ ``` 
 
-   #logout
+### Ansible Setting
+  -**Modify invendtory/hosts.yaml** as you want, like ansible_host: 192.168.1.30
 
-   # modify inventory/hosts.yaml as you want, like ansible_host: 192.168.1.30
- 
-   # exec ansible
+
+
+### Ansible Command 
+   ```bash
+   # exec ansible playbook
    uv run ansible-playbook playbooks/build_k8s/build_k8s.yaml  
-
- ```
+   ```

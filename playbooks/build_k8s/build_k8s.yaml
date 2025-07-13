@@ -391,15 +391,6 @@
       register: cilium_install_output
       when: cilium_version.rc != 0
 
-    - name: Debug Cilium install output
-      ansible.builtin.debug:
-        var: cilium_install_output
-
-    - name: Recursively WORKDIR directory
-      ansible.builtin.file:
-        path: "{{ WORKDIR }}"
-        state: absent
-
 - name: Restore
   hosts: all
   become: true
@@ -416,3 +407,8 @@
         group: root
         mode: "0644"
       register: disable_unattended_upgrades
+
+    - name: Recursively WORKDIR directory
+      ansible.builtin.file:
+        path: "{{ WORKDIR }}"
+        state: absent
