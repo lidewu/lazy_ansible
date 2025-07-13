@@ -5,6 +5,7 @@ build/
 dist/
 wheels/
 *.egg-info
-
+.vault_pass.txt
+playbooks/build_k8s/vars/k8s-join-vars.yaml
 # Virtual environments
 .venv
