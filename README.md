@@ -5,10 +5,16 @@
 
 
 ### System Requirements
-  - Run ./install_uv.sh 
+  - Run ./install_uv.sh
+
   ```bash
    sh ./install_uv.sh
  ``` 
+  - Generate SSH Key for login
+
+  ```bash
+  ssh-keygen -f ~/.ssh/id_ed25519
+  ```
 
 ### Ansible Setting
   -**Modify invendtory/hosts.yaml** as you want, like ansible_host: 192.168.1.30
