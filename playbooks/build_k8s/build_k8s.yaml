@@ -153,6 +153,16 @@
       loop: "{{ ansible_play_hosts }}"
       when: hostvars[item].ansible_host is defined
 
+    - name: Add FQDN k8s.lide.tw with multiple IPs to /etc/hosts
+      ansible.builtin.lineinfile:
+        path: /etc/hosts
+        line: "{{ item }} k8s.lide.tw"
+        state: present
+      loop:
+        - 192.168.1.30
+        - 192.168.1.31
+        - 192.168.1.32
+
     - name: Install K8S Depond Packages
       ansible.builtin.apt:
         name:
@@ -412,3 +422,13 @@
       ansible.builtin.file:
         path: "{{ WORKDIR }}"
         state: absent
+        
+    - name: Install Traefik CRDs
+      kubernetes.core.k8s:
+        state: present
+        src: https://raw.githubusercontent.com/traefik/traefik/v3.5/docs/content/reference/dynamic-configuration/kubernetes-crd-definition-v1.yml
+
+    - name: Install Traefik RBAC
+      kubernetes.core.k8s:
+        state: present
+        src: https://raw.githubusercontent.com/traefik/traefik/v3.5/docs/content/reference/dynamic-configuration/kubernetes-crd-rbac.yml
