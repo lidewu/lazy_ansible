@@ -401,6 +401,29 @@
       register: cilium_install_output
       when: cilium_version.rc != 0
 
+
+    - name: Install python3-pip
+      ansible.builtin.apt:
+        name: python3-pip
+        state: present
+        update_cache: yes
+
+    - name: Install kubernetes Python library via apt
+      ansible.builtin.apt:
+        name: python3-kubernetes
+        state: present
+        update_cache: yes
+
+    - name: Install Traefik CRDs
+      kubernetes.core.k8s:
+        state: present
+        definition: "{{ lookup('url', 'https://raw.githubusercontent.com/traefik/traefik/v3.5/docs/content/reference/dynamic-configuration/kubernetes-crd-definition-v1.yml', split_lines=False) | from_yaml_all | list }}"
+
+    - name: Install Traefik RBAC
+      kubernetes.core.k8s:
+        state: present
+        definition: "{{ lookup('url', 'https://raw.githubusercontent.com/traefik/traefik/v3.5/docs/content/reference/dynamic-configuration/kubernetes-crd-rbac.yml', split_lines=False) | from_yaml_all | list }}"
+
 - name: Restore
   hosts: all
   become: true
@@ -422,13 +445,3 @@
       ansible.builtin.file:
         path: "{{ WORKDIR }}"
         state: absent
-        
-    - name: Install Traefik CRDs
-      kubernetes.core.k8s:
-        state: present
-        src: https://raw.githubusercontent.com/traefik/traefik/v3.5/docs/content/reference/dynamic-configuration/kubernetes-crd-definition-v1.yml
-
-    - name: Install Traefik RBAC
-      kubernetes.core.k8s:
-        state: present
-        src: https://raw.githubusercontent.com/traefik/traefik/v3.5/docs/content/reference/dynamic-configuration/kubernetes-crd-rbac.yml
