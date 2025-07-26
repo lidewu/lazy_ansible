@@ -248,6 +248,7 @@
         update_cache: yes
         upgrade: dist
 
+
 - name: Init K8S Cluster
   hosts: k8s_control_plane_init
   become: true
@@ -422,7 +423,29 @@
     - name: Install Traefik RBAC
       kubernetes.core.k8s:
         state: present
-        definition: "{{ lookup('url', 'https://raw.githubusercontent.com/traefik/traefik/v3.5/docs/content/reference/dynamic-configuration/kubernetes-crd-rbac.yml', split_lines=False) | from_yaml_all | list }}"
+        definition: "{{ lookup('url', 'https://raw.githubusercontent.com/traefik/traefik/v3.5/docs/content/reference/dynamic-configuration/kubernetes-crd-rbac.yml', split_lines=False) | from_yaml_all | list }}" 
+
+    - name: Download get-helm-3 script
+      ansible.builtin.get_url:
+        url: https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3
+        dest: /tmp/get_helm.sh
+        mode: '0700'
+
+    - name: Execute get-helm-3 installer
+      ansible.builtin.shell:
+        cmd: /tmp/get_helm.sh
+
+    - name: Cleanup installer script
+      ansible.builtin.file:
+        path: /tmp/get_helm.sh
+        state: absent
+
+    - name: Enable Helm bash completion
+      ansible.builtin.shell: |
+        helm completion bash | tee /etc/bash_completion.d/helm
+      args:
+        creates: /etc/bash_completion.d/helm
+
 
 - name: Restore
   hosts: all
