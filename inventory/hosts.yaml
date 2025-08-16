@@ -14,7 +14,7 @@ all:
       ansible_host: 192.168.1.35
   vars:
     ansible_user: sky
-    ansible_ssh_private_key_file: ~/.ssh/id_ed25519
+    #ansible_ssh_private_key_file: ~/.ssh/id_ed25519
     ansible_ssh_pass: !vault |
           $ANSIBLE_VAULT;1.1;AES256
           35613430633034653965363961336566313230343230623139363933323666623666353433646135

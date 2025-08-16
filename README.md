@@ -24,7 +24,7 @@
    - Create ansible_ssh_pass & ansible_become_pass
      -- modfiy 'my_secure_password' to your password
    ```bash
-     ansible-vault encrypt_string 'my_secure_password' --name 'ansible_ssh_pass' --ask-vault-pass
+     ansible-vault encrypt_string 'my_secure_password' --name 'ansible_ssh_pass'
   ```
    - After you got this:
   ```bash
@@ -36,13 +36,8 @@
           6565316662326230350a343261376334626536376239393234656362616534343062323831326638
           3663
   ```
-   - Copy & Paste to hosts.yaml
+   - Copy & Paste to inventory/hosts.yaml
 
-   - Create .vault_pass.yaml
-   ```bash
-     vim .vault_pass.yaml
-   ```
-     Then enter the vault-pass
    
 
 ### Ansible Command 

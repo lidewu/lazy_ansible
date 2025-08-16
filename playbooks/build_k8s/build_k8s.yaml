@@ -22,6 +22,7 @@
         state: present
         key: "{{ lookup('file', '~/.ssh/id_ed25519.pub') }}"
         
+        
     - name: Disable SWAP
       ansible.builtin.command: swapoff -a
       register: swapoff_result
@@ -162,7 +163,7 @@
     - name: Add FQDN k8s.lide.tw with multiple IPs to /etc/hosts
       ansible.builtin.lineinfile:
         path: /etc/hosts
-        line: "{{ item }} k8s.lide.tw"
+        line: "{{ item }} {{ K8S_FQDN }}"
         state: present
       loop:
         - 192.168.1.30
@@ -399,12 +400,15 @@
         remote_src: yes
       when: cilium_version.rc != 0
 
-    - name: Install Cilium version 1.17.5
+    - name: Install Cilium  stable version 
       ansible.builtin.command: 
         argv:
           - cilium 
           - install
           - --version={{ cilium_stable_version.stdout }}
+          - --set ipam.mode=cluster-pool
+          - --set ipam.operator.clusterPoolIPv4PodCIDRList={{ K8S_POD_NETWORK_CIDR }}
+          - --set ipam.operator.clusterPoolIPv4MaskSize=24  
       register: cilium_install_output
       when: cilium_version.rc != 0
 
