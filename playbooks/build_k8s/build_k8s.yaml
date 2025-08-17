@@ -362,7 +362,7 @@
         argv: "{{ join_worker_command.split() }}"
 
 - name: Install Cilium 、traefik、metallb
-  hosts: k8s_cni_cilium
+  hosts: k8s_all_setting
   become: true
   vars_files:
     - ./vars/control-plane-vars.yaml
@@ -445,6 +445,22 @@
       args:
         creates: /etc/bash_completion.d/helm
 
+    - name: Get Local Path Provisioner
+      ansible.builtin.get_url:
+        url: https://raw.githubusercontent.com/rancher/local-path-provisioner/v0.0.32/deploy/local-path-storage.yaml
+        dest: /tmp/local-path-storage.yaml
+        mode: '0664'
+
+    - name: Apply Local Path Provisioner
+      kubernetes.core.k8s:
+        state: present
+        src: /tmp/local-path-storage.yaml
+
+    - name: Delete local-path-storage file
+      ansible.builtin.file:
+        path: /tmp/local-path-storage.yaml
+        state: absent
+
     - name: Create a metallb namespace
       kubernetes.core.k8s:
         name: metallb
@@ -498,7 +514,7 @@
           ingressRoute.dashboard.entryPoints: {web}
           providers.kubernetesGateway.enabled: true
           gateway.namespacePolicy: All
-
+    
 - name: Restore
   hosts: all
   become: true

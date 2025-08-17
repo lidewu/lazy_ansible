@@ -43,6 +43,6 @@ all:
         k8s-4:
         k8s-5:
         k8s-6:
-    k8s_cni_cilium:
+    k8s_all_setting:
       hosts:
         k8s-1:
