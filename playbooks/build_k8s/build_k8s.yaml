@@ -361,7 +361,7 @@
       ansible.builtin.command:
         argv: "{{ join_worker_command.split() }}"
 
-- name: Install K8S CNI Plugin-cilium
+- name: Install Cilium 、traefik、metallb
   hosts: k8s_cni_cilium
   become: true
   vars_files:
@@ -423,15 +423,6 @@
         state: present
         update_cache: yes
 
-    - name: Install Traefik CRDs
-      kubernetes.core.k8s:
-        state: present
-        definition: "{{ lookup('url', 'https://raw.githubusercontent.com/traefik/traefik/v3.5/docs/content/reference/dynamic-configuration/kubernetes-crd-definition-v1.yml', split_lines=False) | from_yaml_all | list }}"
-
-    - name: Install Traefik RBAC
-      kubernetes.core.k8s:
-        state: present
-        definition: "{{ lookup('url', 'https://raw.githubusercontent.com/traefik/traefik/v3.5/docs/content/reference/dynamic-configuration/kubernetes-crd-rbac.yml', split_lines=False) | from_yaml_all | list }}" 
 
     - name: Download get-helm-3 script
       ansible.builtin.get_url:
@@ -454,6 +445,59 @@
       args:
         creates: /etc/bash_completion.d/helm
 
+    - name: Create a metallb namespace
+      kubernetes.core.k8s:
+        name: metallb
+        api_version: v1
+        kind: Namespace
+        state: present
+
+    - name: Add & Update metalLB repo
+      kubernetes.core.helm_repository:
+        name: metallb
+        repo_url: "https://metallb.github.io/metallb"
+        state: present
+
+    - name: Install metallb
+      kubernetes.core.helm:
+        name: metallb
+        chart_ref: metallb/metallb
+        release_namespace: metallb
+        state: present
+        values:
+          labels:
+            pod-security.kubernetes.io/enforce: privileged
+            pod-security.kubernetes.io/audit: privileged
+            pod-security.kubernetes.io/warn: privileged
+          speaker:
+            frr:
+              enabled: true
+
+    - name: Create a traefik namespace
+      kubernetes.core.k8s:
+        name: traefik
+        api_version: v1
+        kind: Namespace
+        state: present
+
+    - name: Add & Update traefik repo
+      kubernetes.core.helm_repository:
+        name: traefik
+        repo_url: "https://traefik.github.io/charts"
+        state: present
+
+    - name: Install traefik
+      kubernetes.core.helm:
+        name: traefik
+        chart_ref: traefik/traefik
+        release_namespace: traefik
+        state: present
+        values:
+          ingressRoute.dashboard.enabled: true
+          ingressRoute.dashboard.matchRule: 'Host(`dashboard.localhost`)'
+          ingressRoute.dashboard.entryPoints: {web}
+          providers.kubernetesGateway.enabled: true
+          gateway.namespacePolicy: All
 
 - name: Restore
   hosts: all
