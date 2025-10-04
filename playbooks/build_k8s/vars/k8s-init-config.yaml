@@ -1,0 +1,18 @@
+apiVersion: kubeadm.k8s.io/v1beta3
+kind: ClusterConfiguration
+controlPlaneEndpoint: "{{ K8S_FQDN }}"
+networking:
+  podSubnet: "{{ K8S_POD_NETWORK_CIDR }}"
+  serviceSubnet: "{{ K8S_SERVICE_CIDR }}"
+---
+# Kubelet 的配置，這會被 kubeadm 寫入 ConfigMap 並應用到所有節點
+apiVersion: kubelet.config.k8s.io/v1beta1
+kind: KubeletConfiguration
+cgroupDriver: systemd # 依你的 CRI (containerd) 設定
+# 啟用 CRI Socket
+containerRuntimeEndpoint: "unix:///run/containerd/containerd.sock"
+
+# ！！！ Image 垃圾收集閾值設定 ！！！
+imageGCHighThresholdPercent: 70  # 磁碟使用率達到 70% 時開始清理
+imageGCLowThresholdPercent: 60   # 清理到 60% 時停止
+imageMinimumGCAge: "5m"        # (可選) 最小年齡，如果未設置則使用預設值

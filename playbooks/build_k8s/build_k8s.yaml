@@ -262,16 +262,19 @@
   vars_files:
     - ./vars/control-plane-vars.yaml
   tasks:
+    - name: copy init-config files
+      ansible.builtin.template:
+        src: ./vars/k8s-init-config.yaml
+        dest: /etc/kubernetes/k8s-init-config.yaml
+        mode: '0644'
+
     - name: Kubeadm init
       ansible.builtin.command:
         argv:
           - kubeadm
           - init
           - --upload-certs
-          - --control-plane-endpoint={{ K8S_FQDN }}
-          - --cri-socket=unix:///run/containerd/containerd.sock
-          - --pod-network-cidr={{ K8S_POD_NETWORK_CIDR }}
-          - --service-cidr={{ K8S_SERVICE_CIDR }}
+          - --config=/etc/kubernetes/k8s-init-config.yaml
       register: kubeadm_output
 
     - name: Ensure kube directory exists
@@ -461,6 +464,19 @@
         path: /tmp/local-path-storage.yaml
         state: absent
 
+
+    - name: Set local-path StorageClass as Default
+      kubernetes.core.k8s:
+        state: patched
+        api_version: storage.k8s.io/v1
+        kind: StorageClass
+        name: local-path
+        definition:
+          metadata:
+            annotations:
+              storageclass.kubernetes.io/is-default-class: "true"
+        apply: yes
+
     - name: Create a metallb namespace
       kubernetes.core.k8s:
         name: metallb
@@ -540,7 +556,6 @@
             websecure:
               port: 443
               protocol: TCP
-
 
     
 - name: Restore
