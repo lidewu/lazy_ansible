@@ -1,6 +1,7 @@
 apiVersion: kubeadm.k8s.io/v1beta3
 kind: ClusterConfiguration
 controlPlaneEndpoint: "{{ K8S_FQDN }}"
+clusterName: "{{ Cluster_NAME }}"
 networking:
   podSubnet: "{{ K8S_POD_NETWORK_CIDR }}"
   serviceSubnet: "{{ K8S_SERVICE_CIDR }}"
