@@ -278,6 +278,11 @@
           - --config=/etc/kubernetes/k8s-init-config.yaml
       register: kubeadm_output
 
+    - name: Waiting INIT
+      ansible.builtin.pause:
+        seconds: 60
+        prompt: "Waiting for Kube Control plane & etcd."
+
     - name: Ensure kube directory exists
       ansible.builtin.file:
         path: "{{ ansible_env.HOME }}/.kube"
@@ -556,7 +561,7 @@
           ingressRoute:
             dashboard:
               enabled: true
-              domain: tk.lide.tw
+              matchRule: "Host(`tk.lide.tw`)"
               entryPoints:
                 - web
                 - websecure
