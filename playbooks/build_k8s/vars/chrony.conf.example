@@ -1,0 +1,40 @@
+# /etc/chrony/chrony.conf
+# This file is managed by Ansible.
+
+pool {{ ntp_server_1 }} iburst
+pool {{ ntp_server_2 }} iburst
+pool {{ ntp_server_3 }} iburst
+
+confdir /etc/chrony/conf.d
+
+
+# Use time sources from DHCP.
+sourcedir /run/chrony-dhcp
+
+# Use NTP sources found in /etc/chrony/sources.d.
+sourcedir /etc/chrony/sources.d
+
+# This directive specify the location of the file containing ID/key pairs for
+# NTP authentication.
+keyfile /etc/chrony/chrony.keys
+
+# This directive specify the file into which chronyd will store the rate
+# information.
+driftfile /var/lib/chrony/chrony.drift
+
+# Save NTS keys and cookies.
+ntsdumpdir /var/lib/chrony
+
+
+# Stop bad estimates upsetting machine clock.
+maxupdateskew 100.0
+
+# Enable the NTP server
+local stratum 10
+
+
+# Log file
+logdir /var/log/chrony
+
+# Set the timezone
+rtcsync

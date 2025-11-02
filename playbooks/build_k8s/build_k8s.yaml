@@ -3,7 +3,7 @@
   hosts: all # Make sure this host group is defined in your inventory
   become: yes
   vars_files:
-    - ./vars/control-plane-vars.yaml
+    - ./vars/k8s-vars.yaml
   tasks:
     - name: Disable unattended-upgrades
       ansible.builtin.copy:
@@ -21,6 +21,11 @@
         user: "{{ ansible_user }}"
         state: present
         key: "{{ lookup('file', '~/.ssh/id_ed25519.pub') }}"
+
+    - name: Set TimeZone
+      community.general.timezone:
+        name: "{{ K8S_TZ }}"
+        hwclock: "UTC"
         
         
     - name: Disable SWAP
@@ -181,9 +186,23 @@
           - gnupg
           - bash-completion 
           - nfs-common
+          - chrony
         state: present
         update_cache: yes
         lock_timeout: 30
+
+    - name: Config chrony.conf
+      ansible.builtin.template:
+        src: ./vars/chrony.conf.example
+        dest: /etc/chrony/chrony.conf
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: Restart chrony Sevices
+      ansible.builtin.systemd_service:
+        name: chrony
+        state: restarted
 
     - name: Install K8S gpgkey
       ansible.builtin.apt_key:
@@ -261,7 +280,7 @@
   hosts: k8s_control_plane_init
   become: true
   vars_files:
-    - ./vars/control-plane-vars.yaml
+    - ./vars/k8s-vars.yaml
   tasks:
     - name: copy init-config files
       ansible.builtin.template:
@@ -374,7 +393,7 @@
   hosts: k8s_all_setting
   become: true
   vars_files:
-    - ./vars/control-plane-vars.yaml
+    - ./vars/k8s-vars.yaml
   tasks:
     - name: Check if cilium-cli is installed
       ansible.builtin.command: cilium version
@@ -580,7 +599,7 @@
   hosts: all
   become: true
   vars_files:
-    - ./vars/control-plane-vars.yaml
+    - ./vars/k8s-vars.yaml
   tasks:
     - name: Restore unattended-upgrades
       ansible.builtin.copy:
