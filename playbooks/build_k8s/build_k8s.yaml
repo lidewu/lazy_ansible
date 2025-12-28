@@ -594,6 +594,55 @@
               port: 443
               protocol: TCP
 
+    - name: Deploy KubeVirt Operator
+      kubernetes.core.k8s:
+        state: present
+        src: https://github.com/kubevirt/kubevirt/releases/download/{{ KUBEVIRT_VERSION }}/kubevirt-operator.yaml
+        wait_timeout: 60
+
+    - name: Deploy KubeVirt CR
+      kubernetes.core.k8s:
+        state: present
+        src: https://github.com/kubevirt/kubevirt/releases/download/{{ KUBEVIRT_VERSION }}/kubevirt-cr.yaml
+        wait_timeout: 60
+
+
+    - name: Wait for KubeVirt components to be fully deployed
+      kubernetes.core.k8s_info:
+        api_version: kubevirt.io/v1
+        kind: KubeVirt
+        name: kubevirt
+        namespace: kubevirt
+      until: "('status' in result.resources[0] and result.resources[0].status.phase == 'Deployed')"
+      retries: 40 
+      delay: 5
+      register: kubevirt_status
+      no_log: true
+
+    - name: Installation Complete Check
+      ansible.builtin.debug:
+        msg: "KubeVirt {{ kubevirt_version }} Deployed！ Status: {{ kubevirt_status.resources[0].status.phase }}"
+
+    - name: Deploy Containerized Data Importer Operator
+      kubernetes.core.k8s:
+       state: present
+       src: https://github.com/kubevirt/containerized-data-importer/releases/download/{{ CDI_VERSION }}/cdi-operator.yaml
+       wait_timeout: 60
+
+
+    - name: Deploy Containerized Data Importer CR
+      kubernetes.core.k8s:
+       state: present
+       src: https://github.com/kubevirt/containerized-data-importer/releases/download/{{ CDI_VERSION }}/cdi-cr.yaml
+       wait_timeout: 60
+
+    - name: Install virtctl 
+      ansible.builtin.get_url:
+        url: "https://github.com/kubevirt/kubevirt/releases/download/${KUBEVIRT_VERSION}/virtctl-${KUBEVIRT_VERSION}-${ARCH}"
+        dest: "/usr/local/bin/virtctl"
+        mode: "0744"
+        force: yes
+
     
 - name: Restore
   hosts: all

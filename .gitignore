@@ -9,3 +9,4 @@ wheels/
 playbooks/build_k8s/vars/k8s-join-vars.yaml
 # Virtual environments
 .venv
+id_rsa_pve
