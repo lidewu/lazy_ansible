@@ -593,52 +593,61 @@
             websecure:
               port: 443
               protocol: TCP
+      retries: 5
+      delay: 10
+
+    - name: Wait for etcd to settle down
+      ansible.builtin.pause:
+        seconds: 20
 
     - name: Deploy KubeVirt Operator
       kubernetes.core.k8s:
         state: present
-        src: https://github.com/kubevirt/kubevirt/releases/download/{{ KUBEVIRT_VERSION }}/kubevirt-operator.yaml
-        wait_timeout: 60
+        src: https://github.com/kubevirt/kubevirt/releases/download/v{{ KUBEVIRT_VERSION }}/kubevirt-operator.yaml
+        wait_timeout: 120
+
+    - name: Wait for etcd to settle down
+      ansible.builtin.pause:
+        seconds: 20
 
     - name: Deploy KubeVirt CR
       kubernetes.core.k8s:
         state: present
-        src: https://github.com/kubevirt/kubevirt/releases/download/{{ KUBEVIRT_VERSION }}/kubevirt-cr.yaml
-        wait_timeout: 60
+        src: https://github.com/kubevirt/kubevirt/releases/download/v{{ KUBEVIRT_VERSION }}/kubevirt-cr.yaml
+        wait_timeout: 120
 
-
-    - name: Wait for KubeVirt components to be fully deployed
-      kubernetes.core.k8s_info:
-        api_version: kubevirt.io/v1
-        kind: KubeVirt
-        name: kubevirt
-        namespace: kubevirt
-      until: "('status' in result.resources[0] and result.resources[0].status.phase == 'Deployed')"
-      retries: 40 
-      delay: 5
-      register: kubevirt_status
-      no_log: true
-
-    - name: Installation Complete Check
-      ansible.builtin.debug:
-        msg: "KubeVirt {{ kubevirt_version }} Deployed！ Status: {{ kubevirt_status.resources[0].status.phase }}"
+    - name: Wait for KubeVirt CR to appear and reach Deployed phase
+      ansible.builtin.shell: |
+        kubectl get kubevirt kubevirt -n kubevirt -o jsonpath='{.status.phase}'
+      register: resource_phase
+      until: resource_phase.stdout == "Deployed"
+      retries: 30
+      delay: 30
+      changed_when: false
+      failed_when: 
+        - resource_phase.rc != 0 
+        - "'not found' not in resource_phase.stderr"
 
     - name: Deploy Containerized Data Importer Operator
       kubernetes.core.k8s:
        state: present
-       src: https://github.com/kubevirt/containerized-data-importer/releases/download/{{ CDI_VERSION }}/cdi-operator.yaml
-       wait_timeout: 60
+       src: https://github.com/kubevirt/containerized-data-importer/releases/download/v{{ CDI_VERSION }}/cdi-operator.yaml
+       wait_timeout: 120
+
+    - name: Wait for etcd to settle down
+      ansible.builtin.pause:
+        seconds: 30
 
 
     - name: Deploy Containerized Data Importer CR
       kubernetes.core.k8s:
        state: present
-       src: https://github.com/kubevirt/containerized-data-importer/releases/download/{{ CDI_VERSION }}/cdi-cr.yaml
-       wait_timeout: 60
+       src: https://github.com/kubevirt/containerized-data-importer/releases/download/v{{ CDI_VERSION }}/cdi-cr.yaml
+       wait_timeout: 120
 
     - name: Install virtctl 
       ansible.builtin.get_url:
-        url: "https://github.com/kubevirt/kubevirt/releases/download/${KUBEVIRT_VERSION}/virtctl-${KUBEVIRT_VERSION}-${ARCH}"
+        url: https://github.com/kubevirt/kubevirt/releases/download/v{{ KUBEVIRT_VERSION }}/virtctl-v{{ KUBEVIRT_VERSION }}-linux-{{ ARCH }}
         dest: "/usr/local/bin/virtctl"
         mode: "0744"
         force: yes
