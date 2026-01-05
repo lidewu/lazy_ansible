@@ -25,7 +25,6 @@
     - name: Set TimeZone
       community.general.timezone:
         name: "{{ K8S_TZ }}"
-        hwclock: "UTC"
         
         
     - name: Disable SWAP
@@ -43,8 +42,11 @@
       register: fstab_result
       failed_when: fstab_result.failed
 
-    - name: Load IPVS & K8S modules
-      ansible.builtin.command: modprobe {{ item }}
+    - name: Manage Kernel Modules (Load and Persist)
+      community.general.modprobe:
+        name: "{{ item }}"
+        state: present
+        persistent: present
       loop:
         - ip_vs
         - ip_vs_rr
@@ -55,22 +57,6 @@
         - br_netfilter
         - vhost_vsock
 
-    - name: modprobe file
-      ansible.builtin.copy:
-        content: |
-          ip_vs
-          ip_vs_rr
-          ip_vs_wrr
-          ip_vs_sh
-          nf_conntrack
-          overlay
-          br_netfilter
-          vhost_vsock
-        dest: /etc/modules-load.d/ipvs.conf
-        owner: root
-        group: root
-        mode: "0644"
-
     - name: configure sysctl for k8s
       ansible.builtin.copy:
         content: |
@@ -78,6 +64,7 @@
           net.bridge.bridge-nf-call-iptables = 1
           net.ipv4.ip_forward = 1
           vm.swappiness=0
+          kernel.unprivileged_bpf_disabled=1
         dest: /etc/sysctl.d/k8s.conf
         owner: root
         group: root
@@ -85,12 +72,6 @@
 
     - name: Apply systcl setting
       ansible.builtin.command: sysctl --system
-
-    - name: Create WORKDIR
-      ansible.builtin.file:
-        path: "{{ WORKDIR }}"
-        state: directory
-        mode: "0744"
 
     - name: Create Directories
       ansible.builtin.file:
@@ -103,23 +84,32 @@
         - { path: "/usr/local/lib/systemd/system", mode: "0755" }
         - { path: "/etc/containerd", mode: "0755" }
 
+    - name: Check if containerd files already exist
+      ansible.builtin.stat:
+        path: "{{ item.dest }}"
+      loop: 
+        - { dest: "{{ WORKDIR }}/containerd-static-{{ CONTAINERD_VERSION }}.tar.gz" }
+        - { dest: "/usr/local/sbin/runc" }
+        - { dest: "{{ WORKDIR }}/cni-plugin-v{{ CNI_VERSION }}.tgz" }
+        - { dest: "/usr/local/lib/systemd/system/containerd.service" }
+        - { dest: "/etc/containerd/config.toml" }
+      register: file_stats
+
     - name: Download containerd files
       ansible.builtin.get_url:
-        url: "{{ item.url }}"
-        dest: "{{ item.dest }}"
-        mode: "{{ item.mode }}"
-        force: yes
-      loop: 
-        # containerd
-        - { url: "https://github.com/containerd/containerd/releases/download/v{{ CONTAINERD_VERSION }}/containerd-static-{{ CONTAINERD_VERSION }}-linux-{{ ARCH }}.tar.gz", dest: "{{ WORKDIR }}/containerd-static-{{ CONTAINERD_VERSION }}.tar.gz", mode: "0644"}
-        # runc
-        - { url: "https://github.com/opencontainers/runc/releases/download/v{{ RUNC_VERSION }}/runc.{{ ARCH }}", dest: "/usr/local/sbin/runc", mode: "0755"}
-        # cni
-        - { url: "https://github.com/containernetworking/plugins/releases/download/v{{ CNI_VERSION }}/cni-plugins-linux-{{ ARCH }}-v{{ CNI_VERSION }}.tgz", dest: "{{ WORKDIR }}/cni-plugin-v{{ CNI_VERSION }}.tgz", mode: "0644"}
-        # containerd service
-        - { url: "https://raw.githubusercontent.com/containerd/containerd/main/containerd.service", dest: "/usr/local/lib/systemd/system/containerd.service", mode: "0644"}
-        # ctr config  
-        - { url: "https://github.com/lidewu/lidewu.github.io/raw/refs/heads/main/config.toml", dest: "/etc/containerd/config.toml", mode: "0644"}
+        url: "{{ item.0.url }}"
+        dest: "{{ item.0.dest }}"
+        mode: "{{ item.0.mode }}"
+        force: no  # 設定為 no，若檔案已存在則不強制覆蓋
+      loop: "{{ download_list | zip(file_stats.results) | list }}"
+      vars:
+        download_list:
+          - { url: "https://github.com/containerd/containerd/releases/download/v{{ CONTAINERD_VERSION }}/containerd-static-{{ CONTAINERD_VERSION }}-linux-{{ ARCH }}.tar.gz", dest: "{{ WORKDIR }}/containerd-static-{{ CONTAINERD_VERSION }}.tar.gz", mode: "0644"}
+          - { url: "https://github.com/opencontainers/runc/releases/download/v{{ RUNC_VERSION }}/runc.{{ ARCH }}", dest: "/usr/local/sbin/runc", mode: "0755"}
+          - { url: "https://github.com/containernetworking/plugins/releases/download/v{{ CNI_VERSION }}/cni-plugins-linux-{{ ARCH }}-v{{ CNI_VERSION }}.tgz", dest: "{{ WORKDIR }}/cni-plugin-v{{ CNI_VERSION }}.tgz", mode: "0644"}
+          - { url: "https://raw.githubusercontent.com/containerd/containerd/main/containerd.service", dest: "/usr/local/lib/systemd/system/containerd.service", mode: "0644"}
+          - { url: "https://github.com/lidewu/lidewu.github.io/raw/refs/heads/main/config.toml", dest: "/etc/containerd/config.toml", mode: "0644"}
+      when: not item.1.stat.exists
 
     - name: Install containerd & cni
       ansible.builtin.unarchive:
@@ -131,32 +121,31 @@
         - { src: "{{ WORKDIR }}/containerd-static-{{ CONTAINERD_VERSION }}.tar.gz", dest: "/usr/local", mode: "0755" }
         - { src: "{{ WORKDIR }}/cni-plugin-v{{ CNI_VERSION }}.tgz", dest: "/opt/cni/bin", mode: "0755" }
 
-
-    - name: systemd to reread configs
-      ansible.builtin.systemd_service:
-        daemon_reload: true
-
     - name: Restart containerd service
       ansible.builtin.systemd_service:
         name: containerd.service
         state: restarted
+        daemon_reload: true
         
     - name: Enable containerd service and ensure it is not masked
       ansible.builtin.systemd_service:
         name: containerd.service
         enabled: true
         masked: no
-        
-    - name: Remove useless packages from the cache
-      ansible.builtin.apt:
-        autoclean: yes
-        lock_timeout: 30
 
-    - name: Remove dependencies that are no longer required
-      ansible.builtin.apt:
-        autoremove: yes
-        lock_timeout: 30
+    - name: Check /etc/cloud/cloud.cfg file
+      stat:
+        path: /etc/cloud/cloud.cfg
+      register: cloud_cfg_stat
 
+    - name: cloud_config rmoeve - update_etc_hosts
+      replace:
+        path: /etc/cloud/cloud.cfg
+        regexp: "^(\\s*)- update_etc_hosts"
+        replace: "\\1# - update_etc_hosts"
+      when: cloud_cfg_stat.stat.exists
+
+      
     - name: Add ansible hosts to /etc/hosts
       ansible.builtin.lineinfile:
         path: /etc/hosts
@@ -175,6 +164,12 @@
         - 192.168.1.31
         - 192.168.1.32
 
+    - name: Add Cappelikan PPA
+      ansible.builtin.apt_repository:
+        repo: 'ppa:cappelikan/ppa'
+        state: present
+        update_cache: yes
+
     - name: Install K8S Depond Packages
       ansible.builtin.apt:
         name:
@@ -187,9 +182,17 @@
           - bash-completion 
           - nfs-common
           - chrony
+          - python3-pip
+          - python3-kubernetes         
+        state: present
+        lock_timeout: 30
+
+    - name: Install Ubuntu HWE Kernel 
+      ansible.builtin.apt:
+        name: linux-generic-hwe-{{ ansible_distribution_version }}
         state: present
         update_cache: yes
-        lock_timeout: 30
+      register: kernel_updated
 
     - name: Config chrony.conf
       ansible.builtin.template:
@@ -198,11 +201,6 @@
         owner: root
         group: root
         mode: '0644'
-
-    - name: Restart chrony Sevices
-      ansible.builtin.systemd_service:
-        name: chrony
-        state: restarted
 
     - name: Install K8S gpgkey
       ansible.builtin.apt_key:
@@ -272,9 +270,21 @@
     
     - name: apt update&upgrade
       ansible.builtin.apt:
-        update_cache: yes
         upgrade: dist
 
+    - name: Remove useless packages from the cache
+      ansible.builtin.apt:
+        autoclean: yes
+        lock_timeout: 30
+
+    - name: Remove dependencies that are no longer required
+      ansible.builtin.apt:
+        autoremove: yes
+        lock_timeout: 30
+
+    - name: Reboot the machine if kernel was updated
+      ansible.builtin.reboot:
+        reboot_timeout: 300
 
 - name: Init K8S Cluster
   hosts: k8s_control_plane_init
@@ -297,10 +307,6 @@
           - --config=/etc/kubernetes/k8s-init-config.yaml
       register: kubeadm_output
 
-    - name: Waiting INIT
-      ansible.builtin.pause:
-        seconds: 60
-        prompt: "Waiting for Kube Control plane & etcd."
 
     - name: Ensure kube directory exists
       ansible.builtin.file:
@@ -347,6 +353,14 @@
         path: /etc/bash_completion.d/kubectl
         mode: '0644'
 
+    - name: Ensure all etcd pods are Running
+      shell: "kubectl get pods -n kube-system -l component=etcd -o jsonpath='{.items[*].status.phase}'"
+      register: etcd_status
+      until: "'Running' in etcd_status.stdout and 'Pending' not in etcd_status.stdout"
+      retries: 10
+      delay: 30
+      changed_when: false
+
 - name: Join K8S Cluster Control Plane
   hosts: k8s_control_plane
   become: true
@@ -378,6 +392,14 @@
       ansible.builtin.file:
         path: /etc/bash_completion.d/kubectl
         mode: '0644'
+
+    - name: Ensure all etcd pods are Running
+      shell: "kubectl get pods -n kube-system -l component=etcd -o jsonpath='{.items[*].status.phase}'"
+      register: etcd_status
+      until: "'Running' in etcd_status.stdout and 'Pending' not in etcd_status.stdout"
+      retries: 10
+      delay: 30
+      changed_when: false
 
 - name: Join K8S Cluster Worker
   hosts: k8s_workerloads
@@ -438,20 +460,6 @@
       register: cilium_install_output
       when: cilium_version.rc != 0
 
-
-    - name: Install python3-pip
-      ansible.builtin.apt:
-        name: python3-pip
-        state: present
-        update_cache: yes
-
-    - name: Install kubernetes Python library via apt
-      ansible.builtin.apt:
-        name: python3-kubernetes
-        state: present
-        update_cache: yes
-
-
     - name: Download get-helm-3 script
       ansible.builtin.get_url:
         url: https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3
@@ -475,14 +483,30 @@
 
     - name: Get Local Path Provisioner
       ansible.builtin.get_url:
-        url: https://raw.githubusercontent.com/rancher/local-path-provisioner/v0.0.32/deploy/local-path-storage.yaml
+        url: https://raw.githubusercontent.com/rancher/local-path-provisioner/v{{ LOCALPATH_VERSION }}/deploy/local-path-storage.yaml
         dest: /tmp/local-path-storage.yaml
         mode: '0664'
+# 新增步驟：確保 API Server 真的能動了
+    - name: Wait for Kubernetes API Server to respond
+      ansible.builtin.command: kubectl get nodes
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: api_ready
+      until: api_ready.rc == 0
+      retries: 20
+      delay: 5
+      changed_when: false
 
+    # 修改步驟：增加 kubeconfig 路徑與重試機制
     - name: Apply Local Path Provisioner
       kubernetes.core.k8s:
         state: present
         src: /tmp/local-path-storage.yaml
+        kubeconfig: /etc/kubernetes/admin.conf  # 明確指定路徑，避免連到 localhost:8080
+      register: apply_result
+      until: apply_result is not failed         # 如果失敗就重試
+      retries: 5                                # 最多重試 5 次
+      delay: 10                                 # 每次失敗等 10 秒
 
     - name: Delete local-path-storage file
       ansible.builtin.file:
