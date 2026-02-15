@@ -1,7 +1,7 @@
 ---
 - name: Build Kubernetes Cluster Base
   hosts: all # Make sure this host group is defined in your inventory
-  become: yes
+  become: true
   vars_files:
     - ./vars/k8s-vars.yaml
   tasks:
@@ -29,9 +29,7 @@
         
     - name: Disable SWAP
       ansible.builtin.command: swapoff -a
-      register: swapoff_result
-      failed_when: swapoff_result.rc != 0
-      changed_when: swapoff_result.rc == 0
+      when: ansible_swaptotal_mb | int > 0
 
     - name: Comment out swap entries in /etc/fstab
       ansible.builtin.replace:
@@ -72,6 +70,7 @@
 
     - name: Apply systcl setting
       ansible.builtin.command: sysctl --system
+      changed_when: false
 
     - name: Create Directories
       ansible.builtin.file:
@@ -134,12 +133,12 @@
         masked: no
 
     - name: Check /etc/cloud/cloud.cfg file
-      stat:
+      ansible.builtin.stat:
         path: /etc/cloud/cloud.cfg
       register: cloud_cfg_stat
 
-    - name: cloud_config rmoeve - update_etc_hosts
-      replace:
+    - name: cloud_config remove - update_etc_hosts
+      ansible.builtin.replace:
         path: /etc/cloud/cloud.cfg
         regexp: "^(\\s*)- update_etc_hosts"
         replace: "\\1# - update_etc_hosts"
@@ -154,15 +153,13 @@
       loop: "{{ ansible_play_hosts }}"
       when: hostvars[item].ansible_host is defined
 
-    - name: Add FQDN k8s.lide.tw with multiple IPs to /etc/hosts
+    - name: Add FQDN to /etc/hosts using inventory IPs
       ansible.builtin.lineinfile:
         path: /etc/hosts
-        line: "{{ item }} {{ K8S_FQDN }}"
+        line: "{{ hostvars[item].ansible_host }} {{ K8S_FQDN }}"
         state: present
-      loop:
-        - 192.168.1.30
-        - 192.168.1.31
-        - 192.168.1.32
+      loop: "{{ groups['all'] }}"
+      when: hostvars[item].ansible_host is defined
 
     - name: Add Cappelikan PPA
       ansible.builtin.apt_repository:
